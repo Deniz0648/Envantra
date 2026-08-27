@@ -1,0 +1,95 @@
+x-postgres-common: &postgres-common
+  image: postgres:18-alpine
+  environment: &postgres-env
+    POSTGRES_USER: envantra
+    POSTGRES_PASSWORD: envantra
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U envantra"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+  restart: unless-stopped
+
+services:
+  app:
+    build: { context: ., target: dev }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      CONTROL_DATABASE_URL: postgresql://envantra:envantra@control-db:5432/envantra_control
+      AUTH_SECRET: ${AUTH_SECRET:-development-only-secret-change-me-now}
+      SITE_DB_ENCRYPTION_KEY: ${SITE_DB_ENCRYPTION_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+      LDAP_URL: ldap://dev-ad:389
+      LDAP_BASE_DN: DC=devad,DC=test
+      LDAP_BIND_DN: CN=Administrator,CN=Users,DC=devad,DC=test
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-DevOnly!12345}
+      MIGRATION_SITE_DB_HOST_1: site-db-1
+      MIGRATION_SITE_DB_HOST_2: site-db-2
+    ports: ["3000:3000"]
+    volumes:
+      - .:/app
+      - app_node_modules:/app/node_modules
+      - app_next:/app/.next
+    depends_on:
+      control-db: { condition: service_healthy }
+      site-db-1: { condition: service_healthy }
+      site-db-2: { condition: service_healthy }
+      dev-ad: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+      start_period: 60s
+
+  control-db:
+    <<: *postgres-common
+    environment:
+      <<: *postgres-env
+      POSTGRES_DB: envantra_control
+    ports: ["127.0.0.1:54320:5432"]
+    volumes: [control_data_v18:/var/lib/postgresql]
+
+  site-db-1:
+    <<: *postgres-common
+    environment:
+      <<: *postgres-env
+      POSTGRES_DB: envantra_sites_1
+    ports: ["127.0.0.1:54321:5432"]
+    volumes:
+      - site_data_1_v18:/var/lib/postgresql
+      - ./docker/init-site-db-1.sh:/docker-entrypoint-initdb.d/10-sites.sh:ro
+
+  site-db-2:
+    <<: *postgres-common
+    environment:
+      <<: *postgres-env
+      POSTGRES_DB: envantra_sites_2
+    ports: ["127.0.0.1:54322:5432"]
+    volumes:
+      - site_data_2_v18:/var/lib/postgresql
+      - ./docker/init-site-db-2.sh:/docker-entrypoint-initdb.d/10-sites.sh:ro
+
+  dev-ad:
+    image: smblds/smblds:latest
+    container_name: dev-ad
+    environment:
+      REALM: DEVAD.TEST
+      DOMAIN: DEVAD
+      ADMINPASS: "DevOnly!12345"
+      INSECURE_LDAP: "true"
+      TZ: Europe/Istanbul
+    ports:
+      - "127.0.0.1:1389:389"
+      - "127.0.0.1:1636:636"
+    volumes: [dev_ad_data:/var/lib/samba]
+    restart: unless-stopped
+
+volumes:
+  app_node_modules:
+  app_next:
+  control_data_v18:
+  site_data_1_v18:
+  site_data_2_v18:
+  dev_ad_data:

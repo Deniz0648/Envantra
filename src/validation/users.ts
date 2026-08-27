@@ -1,0 +1,5 @@
+import { z } from "zod";
+const uuid=z.string().uuid();
+const scope=z.object({type:z.enum(["GLOBAL","PROVINCE","SITE"]),provinceId:uuid.optional(),siteId:uuid.optional()}).superRefine((value,ctx)=>{if(value.type==="GLOBAL"&&(value.provinceId||value.siteId))ctx.addIssue({code:"custom",message:"Global kapsam lokasyon kimliği içeremez."});if(value.type==="PROVINCE"&&!value.provinceId)ctx.addIssue({code:"custom",message:"İl kapsamı için provinceId zorunludur."});if(value.type==="SITE"&&!value.siteId)ctx.addIssue({code:"custom",message:"Lokasyon kapsamı için siteId zorunludur."})});
+export const createAppUserSchema=z.object({adProfileId:uuid,role:z.enum(["ADMIN","IT_OPERATOR","VIEWER","AUDITOR"]),password:z.string().min(10).max(200),scopes:z.array(scope).min(1).max(100)});
+export const updateAppUserSchema=z.object({role:z.enum(["ADMIN","IT_OPERATOR","VIEWER","AUDITOR"]).optional(),password:z.string().min(10).max(200).optional(),isActive:z.boolean().optional(),scopes:z.array(scope).min(1).max(100).optional()});

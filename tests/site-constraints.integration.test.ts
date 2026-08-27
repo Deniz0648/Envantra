@@ -1,0 +1,12 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Pool } from "pg";
+
+const url=process.env.TEST_SITE_DATABASE_URL;const suite=url?describe:describe.skip;const pool=url?new Pool({connectionString:url}):null;let assetId="";
+suite("lokasyon veritabanı bütünlük kuralları",()=>{
+  beforeAll(async()=>{assetId=randomUUID();await pool!.query("INSERT INTO assets(id,asset_code,category_id,owner_company_id,province_id,site_id,name) VALUES($1,$2,$3,$4,$5,$6,'Test cihazı')",[assetId,`TEST-${assetId}`,randomUUID(),randomUUID(),randomUUID(),randomUUID()])});
+  afterAll(async()=>{await pool!.query("DELETE FROM phone_users WHERE asset_id=$1",[assetId]);await pool!.query("DELETE FROM assignments WHERE asset_id=$1",[assetId]);await pool!.query("DELETE FROM assets WHERE id=$1",[assetId]);await pool!.end()});
+  it("aynı varlığa iki aktif zimmeti reddeder",async()=>{await pool!.query("INSERT INTO assignments(asset_id,profile_id,assigned_by_user_id) VALUES($1,$2,$3)",[assetId,randomUUID(),randomUUID()]);await expect(pool!.query("INSERT INTO assignments(asset_id,profile_id,assigned_by_user_id) VALUES($1,$2,$3)",[assetId,randomUUID(),randomUUID()])).rejects.toMatchObject({code:"23505"})});
+  it("aynı telefona iki aktif ana kullanıcıyı reddeder",async()=>{await pool!.query("INSERT INTO phone_users(asset_id,profile_id,start_date,assigned_by_user_id) VALUES($1,$2,current_date,$3)",[assetId,randomUUID(),randomUUID()]);await expect(pool!.query("INSERT INTO phone_users(asset_id,profile_id,start_date,assigned_by_user_id) VALUES($1,$2,current_date,$3)",[assetId,randomUUID(),randomUUID()])).rejects.toMatchObject({code:"23505"})});
+  it("eşzamanlı ağ cihazı sayaçlarında sıra çakışması üretmez",async()=>{const ids=[randomUUID(),randomUUID(),randomUUID()];const query="INSERT INTO asset_code_sequences(site_id,rack_id,category_id,next_value) VALUES($1,$2,$3,2) ON CONFLICT(site_id,rack_id,category_id) DO UPDATE SET next_value=asset_code_sequences.next_value+1 RETURNING next_value-1 AS sequence";const results=await Promise.all(Array.from({length:20},()=>pool!.query<{sequence:number}>(query,ids)));const sequences=results.map(result=>Number(result.rows[0]?.sequence));expect(new Set(sequences).size).toBe(20);expect(Math.min(...sequences)).toBe(1);expect(Math.max(...sequences)).toBe(20);await pool!.query("DELETE FROM asset_code_sequences WHERE site_id=$1 AND rack_id=$2 AND category_id=$3",ids)});
+});
