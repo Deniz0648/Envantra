@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { Dashboard, type DashboardSummary } from "@/components/dashboard";
 import { currentUser } from "@/src/auth/session";
 import { controlDb } from "@/src/db/control";
-import { adSyncRuns, appUsers, assetCategories, provinces, rooms, siteConnections, sites, unmatchedAdRecords } from "@/src/db/control-schema";
+import { adSyncRuns, appUsers, assetCategories, buildings, floors, provinces, rooms, siteConnections, sites, unmatchedAdRecords } from "@/src/db/control-schema";
 import { assignments, assets } from "@/src/db/site-schema";
 import { getCircuitSnapshot, withSiteDb } from "@/src/db/site-manager";
 import { decryptSiteConnection } from "@/src/lib/secrets";
@@ -76,7 +76,7 @@ async function loadSiteSnapshot(siteId:string,url:string,networkCategoryIds:stri
   return withSiteDb(siteId,url,async db=>{
     const [assetRows,assignmentRows,totalRows,networkRows,attentionRows]=await Promise.all([
       db.select({id:assets.id,name:assets.name,model:assets.model,brand:assets.brand,code:assets.assetCode,categoryId:assets.categoryId,status:assets.status,roomId:assets.roomId,updatedAt:assets.updatedAt})
-        .from(assets).orderBy(desc(assets.updatedAt)).limit(100),
+        .from(assets).orderBy(desc(assets.updatedAt)),
       db.select({value:count()}).from(assignments).where(eq(assignments.status,"ACTIVE")),
       db.select({value:count()}).from(assets),
       networkCategoryIds.length?db.select({value:count()}).from(assets).where(inArray(assets.categoryId,networkCategoryIds)):Promise.resolve([{value:0}]),
@@ -94,9 +94,14 @@ async function loadSiteSnapshot(siteId:string,url:string,networkCategoryIds:stri
 
 async function enrichAssets(rows:Awaited<ReturnType<typeof loadSiteSnapshot>>["assets"],categories:Array<{id:string;name:string;group:"OFFICE"|"NETWORK"}>){
   const roomIds=[...new Set(rows.flatMap(row=>row.roomId?[row.roomId]:[]))];
-  const roomRows=roomIds.length?await controlDb.select({id:rooms.id,name:rooms.name}).from(rooms).where(inArray(rooms.id,roomIds)):[];
+  const roomRows=roomIds.length?await controlDb.select({
+    id:rooms.id,roomName:rooms.name,floorName:floors.name,buildingName:buildings.name,
+  }).from(rooms)
+    .innerJoin(floors,eq(floors.id,rooms.floorId))
+    .innerJoin(buildings,eq(buildings.id,floors.buildingId))
+    .where(inArray(rooms.id,roomIds)):[];
   const categoryMap=new Map(categories.map(category=>[category.id,category]));
-  const roomMap=new Map(roomRows.map(room=>[room.id,room.name]));
+  const roomMap=new Map(roomRows.map(room=>[room.id,[room.buildingName,room.floorName,room.roomName].join(" / ")]));
   return rows.map(row=>({
     id:row.id,name:row.name,meta:[row.brand,row.model].filter(Boolean).join(" ")||"—",code:row.code,
     category:categoryMap.get(row.categoryId)?.name??"Diğer",group:categoryMap.get(row.categoryId)?.group??"OFFICE",
